@@ -82,7 +82,8 @@ Takeaway: a default model almost never catches strokes. Balancing class weights 
   - `stroke_cleaned.csv`: full cleaned dataset, unscaled, with a `split` column (train/validation/test)
   - `stroke_train_scaled.csv`, `stroke_validation_scaled.csv`, `stroke_test_scaled.csv`: scaled versions for modeling
 - [TODO] Professor approval of the topic.
-- [TODO] EDA charts, baseline and models, evaluation, explainability, write-up (Section 7).
+- [DONE] Baseline, tuned logistic regression, threshold selection, test evaluation, explainability, BMI>60 check (`stroke_model.py`, Section 9).
+- [TODO] EDA charts, decision tree / random forest comparison, write-up (Section 7).
 
 ---
 
@@ -205,13 +206,13 @@ Not in the class notebooks (explain if used): `stratify=`, `class_weight="balanc
 
 1. [TODO] Get professor approval for the medical topic and confirm due date and submission format.
 2. [TODO] Load `stroke_cleaned.csv` and make EDA charts: stroke rate by age group, class balance, missing BMI versus stroke, glucose and BMI boxplots by outcome, correlation heatmap, smoking status versus stroke.
-3. [TODO] Baseline: majority-class accuracy (about 94.2% on adults) as the reference to beat.
+3. [DONE] Baseline: majority-class accuracy (about 94.2% on adults) as the reference to beat.
 4. [TODO] Models: logistic regression (plain and `class_weight="balanced"`), decision tree, random forest, optionally gradient boosting. Compare on identical splits.
-5. [TODO] Tune with `GridSearchCV` (for example `scoring="recall"` or `"f1"`) and 5-fold cross-validation on the training data.
-6. [TODO] Evaluate: precision, recall, F1 for the stroke class, confusion matrix, ROC-AUC, precision-recall curve. Discuss the recall versus precision tradeoff (missing a stroke versus false alarms).
-7. [TODO] Explainability: logistic regression coefficients, random forest feature importances, optionally permutation importance; one worked example prediction.
-8. [TODO] Final single evaluation on the test set after choosing the model with validation/cross-validation only.
-9. [TODO] Optional check: results with and without extreme BMI values.
+5. [DONE] (logistic regression) Tune with `GridSearchCV` (for example `scoring="recall"` or `"f1"`) and 5-fold cross-validation on the training data.
+6. [DONE] (logistic regression) Evaluate: precision, recall, F1 for the stroke class, confusion matrix, ROC-AUC, precision-recall curve. Discuss the recall versus precision tradeoff (missing a stroke versus false alarms).
+7. [DONE] (logistic regression coefficients) Explainability: logistic regression coefficients, random forest feature importances, optionally permutation importance; one worked example prediction.
+8. [DONE] (logistic regression) Final single evaluation on the test set after choosing the model with validation/cross-validation only.
+9. [DONE] Optional check: results with and without extreme BMI values.
 10. [TODO] Write-up following the announcement's sections, including real-world use (screening aid that flags adults for follow-up) and responsible ML.
 11. [TODO] Clean the notebook deliverable and split the work between teammates.
 
@@ -232,3 +233,74 @@ Not in the class notebooks (explain if used): `stratify=`, `class_weight="balanc
 - Fit any preprocessing (imputation averages, scalers) on training data only.
 - Do not tune against the test set.
 - Do not use any column derived from `stroke` as an input.
+
+---
+
+## 9. Logistic regression results (`stroke_model.py`)
+
+**Note on terminology:** the target `stroke` is 0/1, so the linear model used is logistic regression (linear regression would give predictions outside 0 to 1 and is not suited to a binary target). Both are linear models; logistic regression passes the linear score through a sigmoid to produce a probability.
+
+### Method
+- Data: provided scaled splits (2,977 train / 638 validation / 638 test, 173 / 37 / 37 strokes). `original_row` is not used as a feature.
+- Tuning: `GridSearchCV`, 5-fold stratified CV on the training data only. Grid: L1 and L2 penalty, 11 values of C from 0.001 to 100, class weight none or balanced. Scoring: average precision (PR-AUC), because it rewards ranking the rare stroke cases well and does not depend on a threshold.
+- Best setting: L1 penalty, C = 3.16, no class weights. CV PR-AUC 0.237; CV ROC-AUC 0.812 (+/- 0.038).
+- Threshold: chosen on the validation set only by maximizing F2 (recall weighted twice as much as precision, since a missed stroke costs more than a false alarm). Chosen threshold: 0.134.
+- Test set: evaluated once, after the model and threshold were fixed.
+
+### Validation results
+
+| Model | Accuracy | Precision | Recall | F1 | ROC-AUC | PR-AUC |
+|---|---|---|---|---|---|---|
+| Majority class | 0.942 | 0 | 0 | 0 | 0.500 | 0.058 |
+| LogReg plain, threshold 0.50 | 0.940 | 0 | 0 | 0 | 0.831 | 0.226 |
+| LogReg balanced, threshold 0.50 | 0.721 | 0.146 | 0.784 | 0.246 | 0.836 | 0.282 |
+| LogReg tuned, threshold 0.50 | 0.939 | 0 | 0 | 0 | 0.832 | 0.233 |
+| LogReg tuned, threshold 0.134 | 0.864 | 0.234 | 0.595 | 0.336 | 0.832 | 0.233 |
+
+### Test results (single evaluation, tuned model, threshold 0.134)
+
+| Metric | Value | 95% bootstrap interval |
+|---|---|---|
+| Accuracy | 0.868 | |
+| Precision (stroke) | 0.247 | 0.165 to 0.333 |
+| Recall (stroke) | 0.622 | 0.463 to 0.788 |
+| F1 (stroke) | 0.354 | |
+| ROC-AUC | 0.850 | 0.793 to 0.902 |
+| PR-AUC | 0.234 | |
+
+Confusion matrix on test (rows actual, columns predicted): 531 true negatives, 70 false positives, 14 false negatives, 23 true positives. The majority-class baseline scores 0.942 accuracy on test but catches no strokes.
+
+### Interpretation
+- At the default 0.5 threshold the model predicts "no stroke" for everyone (precision and recall are 0). Probabilities for a 5.8% event rarely exceed 0.5, so the threshold, not the model's ranking ability, is the problem. ROC-AUC (0.85) shows the ranking is good.
+- Lowering the threshold to 0.134 catches 23 of 37 strokes (62%) at the cost of 70 false alarms. Accuracy drops from 0.94 to 0.87, which is expected and acceptable for a screening aid. Accuracy should not be used to judge this model.
+- Precision is about 25%: roughly 1 in 4 flagged adults had a stroke, versus a base rate of 5.8%, so flagged patients are about 4 times more likely than average to be positive.
+- With only 37 test strokes, the intervals are wide (recall 0.46 to 0.79). Differences of a few percentage points between models are not meaningful.
+- Balanced class weights reach higher recall at 0.50 (0.78) but with lower precision and accuracy; after threshold tuning the two approaches rank cases about equally well (validation ROC-AUC 0.836 vs 0.832).
+
+### Explainability (coefficients; age, glucose and BMI are in standard deviations)
+
+| Feature | Coefficient | Odds ratio per unit |
+|---|---|---|
+| age | 1.278 | 3.59 per SD |
+| bmi_missing | 1.041 | 2.83 |
+| ever_married_Yes | -0.360 | 0.70 |
+| hypertension | 0.283 | 1.33 |
+| avg_glucose_level | 0.269 | 1.31 per SD |
+| work_type_Private | 0.251 | 1.29 |
+| gender_Male | 0.178 | 1.20 |
+| smoking_status_smokes | 0.075 | 1.08 |
+| bmi | 0.061 | 1.06 per SD |
+
+`heart_disease`, `Residence_type_Urban` and `work_type_Never_worked` were set to 0 by the L1 penalty. Smaller effects (self-employed, formerly smoked, never smoked) are near zero.
+
+- Age is the dominant driver, consistent with the EDA finding (age alone gave an AUC near the full model's).
+- `bmi_missing` is the second-largest effect. This reflects how the data was recorded, not biology, and should be described that way in the report.
+- `ever_married_Yes` has a negative sign after accounting for age. Age and marital status are strongly related, so treat this as a statistical artifact, not a causal effect. The same caution applies to `work_type_Private` and `gender_Male`.
+- `heart_disease` being dropped by L1 does not mean it is unimportant; its information overlaps with age and hypertension in this data. Also note: coefficients are association, not causation.
+- Worked example (test row 4164): intercept -3.555, plus age +2.297, bmi_missing +1.041, glucose +0.645, married -0.360, giving a predicted risk of 0.63 (this patient did not have a stroke, so it is a false positive). A low-risk example (row 2976) has predicted risk 0.024.
+
+### Checks and notes
+- **Extreme BMI (> 60):** removing 9 training rows and 1 test row changed test ROC-AUC from 0.8495 to 0.8492. No meaningful effect, so keeping all BMI values is justified.
+- **Extra terms:** squared age/glucose/BMI and age interactions were tried (CV on train, scored on validation). They did not improve CV or validation scores (validation ROC-AUC 0.831 to 0.834 versus 0.832), so the simpler model was kept.
+- **Remaining TODO:** compare with decision tree and random forest on the same splits, since the assignment needs at least two ML models beyond the baseline. Logistic regression alone does not satisfy that.
+- Files: `model_output/` holds `validation_results.csv`, `test_results.csv`, `coefficients.csv`, `summary.json`, `roc_pr_curves.png`, `confusion_matrix.png`, `coefficients.png`.
